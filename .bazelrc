@@ -1,0 +1,8 @@
+common --copt=-std=c++23
+
+common --copt=-fdiagnostics-color=always
+
+common --copt=-Wall
+common --copt=-Wextra
+common --copt=-Wpedantic
+common --copt=-Werror
