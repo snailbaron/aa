@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  publish:
+    uses: snailbaron/actions/.github/workflows/publish-to-registry.yaml@main
+    secrets:
+      token: ${{ secrets.TOKEN }}
