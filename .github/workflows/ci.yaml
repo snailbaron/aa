@@ -7,8 +7,53 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup MSVC
+        if: ${{ startsWith(matrix.os, 'windows') }}
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: "CMake: build with GCC"
+        if: ${{ startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'macos') }}
+        run: |
+          cmake -B "${{ runner.temp }}/build-gcc" -D CMAKE_C_COMPILER=gcc -D CMAKE_CXX_COMPILER=g++ -G Ninja
+          cmake --build "${{ runner.temp }}/build-gcc"
+      - name: "CMake: build with clang"
+        run: |
+          cmake -B "${{ runner.temp }}/build-clang" -D CMAKE_C_COMPILER=clang -D CMAKE_CXX_COMPILER=clang++ -G Ninja
+          cmake --build "${{ runner.temp }}/build-clang"
+      - name: "CMake: build with MSVC"
+        if: ${{ startsWith(matrix.os, 'windows') }}
+        run: |
+          cmake -B "${{ runner.temp }}/build-msvc" -D CMAKE_C_COMPILER=cl -D CMAKE_CXX_COMPILER=cl -G Ninja
+          cmake --build "${{ runner.temp }}/build-msvc"
+      - name: "Bazel: build & test with GCC"
+        if: ${{ startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'macos') }}
+        run: |
+          bazel build --compiler=g++ //...
+          bazel test --compiler=g++ //...
+      - name: "Bazel: build & test with clang"
+        run: |
+          bazel build --compiler=clang++ //...
+          bazel test --compiler=clang++ //...
+      - name: "Bazel: build & test with MSVC"
+        if: ${{ startsWith(matrix.os, 'windows') }}
+        run: |
+          bazel build --compiler=cl //...
+          bazel test --compiler=cl //...
+
   publish:
     uses: snailbaron/actions/.github/workflows/publish-to-registry.yaml@main
+    needs: build
     secrets:
       token: ${{ secrets.TOKEN }}

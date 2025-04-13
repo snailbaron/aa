@@ -8,6 +8,3 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_subdirectory(example)
 add_subdirectory(src)
-
-enable_testing()
-add_subdirectory(tests)

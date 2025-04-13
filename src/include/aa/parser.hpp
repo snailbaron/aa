@@ -157,8 +157,8 @@ public:
                 for (size_t i = 1; i < arg.length(); i++) {
                     char key = arg.at(i);
 
-                    if (auto op = _ops.flag(key)) {
-                        op->count++;
+                    if (auto flag = _ops.flag(key)) {
+                        flag->count++;
                     } else if (auto op = _ops.option(key)) {
                         if (i + 1 < arg.length()) {
                             op->parseValue(arg.substr(i + 1));

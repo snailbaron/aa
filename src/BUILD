@@ -13,8 +13,5 @@ cc_library(
         "include/aa.hpp",
     ],
     includes = ["include"],
-    linkopts = [
-        "-lstdc++exp",
-    ],
     visibility = ["//visibility:public"],
 )

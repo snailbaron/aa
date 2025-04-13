@@ -23,7 +23,7 @@ TEST_CASE("option types")
         "program", "-i", "10", "-f", "1.5", "-s", "abc",
     };
     auto argv = toArgv(args);
-    aa::parse(args.size(), argv.data());
+    aa::parse((int)args.size(), argv.data());
 
     REQUIRE(integer == 10);
     REQUIRE(floating == 1.5f);
