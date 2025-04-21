@@ -6,7 +6,6 @@ cc_test(
     srcs = ["tests.cpp"],
     deps = [
         "//:aa",
-        "@catch2",
-        "@catch2//:catch2_main",
+        "//deps/catch",
     ],
 )

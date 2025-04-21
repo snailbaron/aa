@@ -1,5 +1,7 @@
 #include <aa.hpp>
-#include <catch2/catch_test_macros.hpp>
+
+#define CATCH_CONFIG_MAIN
+#include <catch.hpp>
 
 #include <string>
 #include <vector>
@@ -8,7 +10,7 @@ std::vector<char*> toArgv(std::vector<std::string>& args)
 {
     std::vector<char*> results;
     for (auto& arg : args) {
-        results.push_back(arg.data());
+        results.push_back(&arg[0]);
     }
     return results;
 }

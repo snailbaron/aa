@@ -1,10 +1,10 @@
 common --enable_platform_specific_config
 
-common:linux --copt=-std=c++20
-common:linux --copt=-fdiagnostics-color=always
+common:linux --copt=-std=c++11
 common:linux --copt=-Wall --copt=-Wextra --copt=-Wpedantic --copt=-Werror
+common:linux --copt=-fdiagnostics-color=always
 
 common:macos --config=linux
 
-common:windows --copt=/std:c++20
+common:windows --copt=/std:c++11
 common:windows --copt=/W4 --copt=/WX

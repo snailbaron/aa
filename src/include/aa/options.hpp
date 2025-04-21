@@ -1,71 +1,80 @@
 #pragma once
 
 #include "error.hpp"
+#include "internal.hpp"
 
-#include <algorithm>
-#include <format>
-#include <memory>
-#include <optional>
-#include <ostream>
-#include <sstream>
-#include <sstream>
-#include <string>
 #include <vector>
+#include <algorithm>
+#include <memory>
+#include <ostream>
+#include <string>
 
 namespace aa {
 
-namespace {
-
-std::string join(
-    const std::vector<std::string>& strings, const std::string delimiter)
-{
-    auto stream = std::ostringstream{};
-    if (auto it = strings.begin(); it != strings.end()) {
-        stream << *it++;
-        for (; it != strings.end(); ++it) {
-            stream << delimiter << *it;
-        }
-    }
-    return std::move(stream).str();
-}
-
-} // namespace
-
-struct FlagData final {
-    int count = 0;
-    std::string help;
-};
-
-struct OptionDataBase {
-    virtual ~OptionDataBase() = default;
+struct OptionData {
+    virtual ~OptionData() = default;
     virtual void parseValue(std::string) = 0;
 
-    std::string metavar = "VALUE";
+    std::vector<std::string> flags;
+    bool expectsValue = false;
     bool required = false;
+    int count = 0;
+    std::string metavar = "VALUE";
     std::string help;
-    bool hasValue = false;
 };
 
 template <class T>
-struct OptionData final : OptionDataBase {
+struct TypedOptionData final : OptionData {
     void parseValue(std::string s) override
     {
-        auto x = T{};
-        auto stream = std::istringstream{std::move(s)};
-        stream >> x;
-        value = x;
-        hasValue = true;
+        values.push_back(internal::fromString<T>(s));
     }
 
-    std::optional<T> value;
+    std::vector<T> values;
+};
+
+template <>
+struct TypedOptionData<void> final : OptionData {
+    void parseValue(std::string) override
+    {
+        FAIL("TypedOptionData<void>::parseValue should not be called");
+    }
+};
+
+class Flag final {
+public:
+    explicit Flag(std::shared_ptr<TypedOptionData<void>> data = nullptr)
+        : _data(std::move(data))
+    { }
+
+    Flag help(std::string message)
+    {
+        _data->help = std::move(message);
+        return *this;
+    }
+
+    int operator*() const
+    {
+        return _data->count;
+    }
+
+    operator int() const
+    {
+        return **this;
+    }
+
+private:
+    std::shared_ptr<TypedOptionData<void>> _data;
 };
 
 template <class T>
 class Option final {
 public:
-    explicit Option(std::shared_ptr<OptionData<T>> data = nullptr)
+    explicit Option(std::shared_ptr<TypedOptionData<T>> data)
         : _data(std::move(data))
-    { }
+    {
+        ASSERT(_data);
+    }
 
     Option metavar(std::string name)
     {
@@ -87,22 +96,36 @@ public:
 
     Option init(T&& x)
     {
-        _data->value = std::forward<T>(x);
-        _data->hasValue = true;
+        _data->values.push_back(std::forward<T>(x));
         return *this;
+    }
+
+    const std::vector<T>& all() const
+    {
+        return _data->values;
+    }
+
+    const T& first() const
+    {
+        if (all().empty()) {
+            FAIL("attempting to access empty option " +
+                internal::join(_data->flags, ","));
+        }
+        return all().front();
+    }
+
+    const T& last() const
+    {
+        if (all().empty()) {
+            FAIL("attempting to access empty option " +
+                internal::join(_data->flags, ","));
+        }
+        return all().back();
     }
 
     const T& operator*() const
     {
-        if (!_data->value) {
-            throw Error{"aa: trying to use a value that was not set: "};
-        }
-        return *_data->value;
-    }
-
-    const T* operator->() const
-    {
-        return &**this;
+        return last();
     }
 
     operator const T&() const
@@ -110,8 +133,13 @@ public:
         return **this;
     }
 
+    const T* operator->() const
+    {
+        return &**this;
+    }
+
 private:
-    std::shared_ptr<OptionData<T>> _data;
+    std::shared_ptr<TypedOptionData<T>> _data;
 };
 
 template <class T>
@@ -120,33 +148,11 @@ std::ostream& operator<<(std::ostream& out, const Option<T>& option)
     return out << *option;
 }
 
-class Flag final {
-public:
-    explicit Flag(std::shared_ptr<FlagData> data = nullptr)
-        : _data(std::move(data))
-    { }
-
-    Flag help(std::string message)
-    {
-        _data->help = std::move(message);
-        return *this;
-    }
-
-    int operator*() const
-    {
-        return _data->count;
-    }
-
-    operator int() const
-    {
-        return **this;
-    }
-
-private:
-    std::shared_ptr<FlagData> _data;
-};
-
 } // namespace aa
+
+#if defined(__cpp_lib_format)
+
+#include <format>
 
 namespace std {
 
@@ -168,3 +174,4 @@ struct formatter<aa::Option<T>, CharT> {
 
 } // namespace std
 
+#endif

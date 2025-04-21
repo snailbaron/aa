@@ -1,106 +1,42 @@
 #pragma once
 
 #include <aa/error.hpp>
+#include <aa/internal.hpp>
 #include <aa/options.hpp>
 
-#include <concepts>
 #include <iostream>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace aa {
 
-class OptionStorage {
-public:
-    void emplace(char flag, std::shared_ptr<FlagData> data)
-    {
-        _shortFlags.emplace(flag, std::move(data));
-    }
-
-    void emplace(std::string flag, std::shared_ptr<FlagData> data)
-    {
-        _longFlags.emplace(std::move(flag), std::move(data));
-    }
-
-    void emplace(char flag, std::shared_ptr<OptionDataBase> data)
-    {
-        _shortOptions.emplace(flag, std::move(data));
-    }
-
-    void emplace(std::string flag, std::shared_ptr<OptionDataBase> data)
-    {
-        _longOptions.emplace(std::move(flag), std::move(data));
-    }
-
-    std::shared_ptr<FlagData> flag(char c) const
-    {
-        if (auto it = _shortFlags.find(c); it != _shortFlags.end()) {
-            return it->second;
-        }
-        return nullptr;
-    }
-
-    std::shared_ptr<FlagData> flag(const std::string& s) const
-    {
-        if (auto it = _longFlags.find(s); it != _longFlags.end()) {
-            return it->second;
-        }
-        return nullptr;
-    }
-
-    std::shared_ptr<OptionDataBase> option(char c) const
-    {
-        if (auto it = _shortOptions.find(c); it != _shortOptions.end()) {
-            return it->second;
-        }
-        return nullptr;
-    }
-
-    std::shared_ptr<OptionDataBase> option(const std::string& s) const
-    {
-        if (auto it = _longOptions.find(s); it != _longOptions.end()) {
-            return it->second;
-        }
-        return nullptr;
-    }
-
-private:
-    std::map<char, std::shared_ptr<FlagData>> _shortFlags;
-    std::map<std::string, std::shared_ptr<FlagData>> _longFlags;
-    std::map<char, std::shared_ptr<OptionDataBase>> _shortOptions;
-    std::map<std::string, std::shared_ptr<OptionDataBase>> _longOptions;
-};
-
-struct OptionDescription {
-    std::vector<std::string> flags;
-    std::variant<
-        std::shared_ptr<FlagData>,
-        std::shared_ptr<OptionDataBase>> data;
-};
-
 class Parser {
 public:
-    template <std::convertible_to<std::string>... Names>
+    template <
+        class... Names,
+        class = std::enable_if<
+            internal::conjunction<
+                std::is_convertible<Names, std::string>...>::value>>
     Flag flag(Names&&... names)
     {
-        auto data = std::make_shared<FlagData>();
-        (addData(names, data), ...);
-        _descriptions.push_back(OptionDescription{{names...}, data});
-        return Flag{std::move(data)};
+        return Flag{addData<void>(false, std::forward<Names>(names)...)};
     }
 
-    template <class T, class... Names>
+    template <
+        class T,
+        class... Names,
+        class = std::enable_if<
+            internal::conjunction<
+                std::is_convertible<Names, std::string>...>::value>>
     Option<T> opt(Names&&... names)
     {
-        auto data = std::make_shared<OptionData<T>>();
-        (addData(names, data), ...);
-        _descriptions.push_back(OptionDescription{{names...}, data});
-        return Option<T>{std::move(data)};
+        return Option<T>{addData<T>(true, std::forward<Names>(names)...)};
     }
 
     void parse(int argc, char* argv[])
@@ -118,101 +54,50 @@ public:
 
     void parse(const std::vector<std::string>& args)
     {
-        std::ostringstream errors;
-
         bool processingFlags = true;
-        std::string awaitingOptionName;
-        std::shared_ptr<OptionDataBase> awaitingArgument;
 
-        for (const auto& arg : args) {
+        for (auto arg = args.begin(); arg != args.end(); ) {
             if (!processingFlags) {
-                _args.push_back(std::move(arg));
-            } else if (awaitingArgument) {
-                awaitingArgument->parseValue(arg);
-                awaitingArgument.reset();
-                awaitingOptionName = "";
-            } else if (arg == "--") {
+                _args.push_back(*arg++);
+            } else if (*arg == "--") {
                 processingFlags = false;
-            } else if (arg.length() > 2 && arg.starts_with("--")) {
-                auto equ = arg.find('=', 2);
-                auto name = arg.substr(0, equ);
-
-                if (auto flag = _ops.flag(name)) {
-                    if (equ != std::string::npos) {
-                        errors << "aa: option " << name <<
-                            " is a flag, and cannot " "accept a value with =\n";
-                    }
-                    flag->count++;
-                } else if (auto op = _ops.option(name)) {
-                    if (equ == std::string::npos) {
-                        awaitingOptionName = name;
-                        awaitingArgument = op;
-                    } else {
-                        op->parseValue(arg.substr(equ + 1));
-                    }
-                } else {
-                    errors << "unknown option: " << name << "\n";
-                }
-            } else if (arg.length() >= 2 && arg.front() == '-') {
-                for (size_t i = 1; i < arg.length(); i++) {
-                    char key = arg.at(i);
-
-                    if (auto flag = _ops.flag(key)) {
-                        flag->count++;
-                    } else if (auto op = _ops.option(key)) {
-                        if (i + 1 < arg.length()) {
-                            op->parseValue(arg.substr(i + 1));
-                        } else {
-                            awaitingOptionName = std::string{"-"} + key;
-                            awaitingArgument = op;
-                        }
-                        break;
-                    } else {
-                        errors << "unknown option: -" << key << "\n";
-                    }
-                }
+                ++arg;
+            } else if (arg->length() > 2 && internal::startsWith(*arg, "--")) {
+                arg = parseLongOption(arg, args.end());
+            } else if (arg->length() > 1 && internal::startsWith(*arg, "-")) {
+                arg = parseShortOption(arg, args.end());
             } else {
-                _args.push_back(arg);
+                _args.push_back(*arg++);
             }
         }
 
-        if (awaitingArgument) {
-            errors << "error: option " << awaitingOptionName <<
-                " is missing an argument\n";
-        }
-
-        for (const auto& description : _descriptions) {
-            if (auto p = std::get_if<std::shared_ptr<OptionDataBase>>(
-                    &description.data)) {
-                if ((*p)->required && !(*p)->hasValue) {
-                    errors << "required option is not set: " <<
-                        join(description.flags, "|") << "\n";
-                }
+        for (const auto& option : _optionList) {
+            if (option->required && option->count == 0) {
+                _errors << "option " << internal::join(option->flags, ",") <<
+                    " is required, but not provided\n";
             }
         }
 
-        if (auto text = std::move(errors).str(); !text.empty()) {
-            std::cerr << text;
-            throw Error{"parsing failed"};
+        auto allErrorText = std::move(_errors).str();
+        if (!allErrorText.empty()) {
+            std::cerr << allErrorText;
+            FAIL("parsing failed");
         }
     }
 
     void printHelp(std::ostream& out) const
     {
         out << "usage: " << _programName;
-        for (const auto& description : _descriptions) {
-            const auto& data = description.data;
-            bool required =
-                std::holds_alternative<std::shared_ptr<OptionDataBase>>(data) &&
-                std::get<std::shared_ptr<OptionDataBase>>(data)->required;
+        for (const auto& option : _optionList) {
+            bool required = option->required;
 
             out << " ";
             if (!required) {
                 out << "[";
             }
-            out << join(description.flags, "|");
-            if (auto p = std::get_if<std::shared_ptr<OptionDataBase>>(&data)) {
-                out << " " << (*p)->metavar;
+            out << internal::join(option->flags, "|");
+            if (option->expectsValue) {
+                out << " " << option->metavar;
             }
             if (!required) {
                 out << "]";
@@ -221,11 +106,9 @@ public:
         out << "\n";
 
         out << "options:\n";
-        for (const auto& description : _descriptions) {
-            out << "  " << join(description.flags, ", ") << " ";
-            std::visit([&out] (const auto& d) {
-                out << d->help << "\n";
-            }, description.data);
+        for (const auto& option : _optionList) {
+            out << "  " << internal::join(option->flags, ", ") << " " <<
+                option->help << "\n";
         }
     }
 
@@ -239,43 +122,149 @@ public:
         _programName = std::move(name);
     }
 
-private:
-    void addData(const std::string& name, const auto& data)
+    template <class T>
+    void breakers(T&& bs)
     {
-        if (name.length() == 2 && name.at(0) == '-' && name.at(1) != '-') {
-            _ops.emplace(name.at(1), data);
-        } else if (name.length() > 2 && name.starts_with("--")) {
-            _ops.emplace(std::move(name), data);
-        } else {
-            throw Error{"invalid flag: " + name};
+        for (auto&& breaker : bs) {
+            _breakers.insert(std::forward<decltype(bs)>(bs));
         }
+    }
+
+private:
+    template <class T, class... Names>
+    std::shared_ptr<TypedOptionData<T>> addData(
+        bool expectsValue, Names&&... names)
+    {
+        auto data = std::make_shared<TypedOptionData<T>>();
+        data->flags = {std::forward<Names>(names)...};
+        data->expectsValue = expectsValue;
+
+        for (const auto& flag : data->flags) {
+            _optionList.push_back(data);
+            if (flag.length() == 2 && flag.at(0) == '-' && flag.at(1) != '-') {
+                _shortOptions.emplace(flag.at(1), data);
+            } else if (flag.length() > 2 && internal::startsWith(flag, "--")) {
+                _longOptions.emplace(flag, data);
+            } else {
+                FAIL("invalid option: " + flag);
+            }
+        }
+
+        return data;
     };
+
+    template <class I>
+    I parseLongOption(I arg, I end)
+    {
+        auto equ = arg->find('=');
+        auto key = arg->substr(0, equ);
+
+        auto optionItr = _longOptions.find(key);
+        if (optionItr == _longOptions.end()) {
+            _errors << "unknown option: " << key << "\n";
+            return std::next(arg);
+        }
+        auto& option = optionItr->second;
+
+        // TODO: check for "values" of flags here, right away. And below.
+
+        option->count++;
+        if (equ != std::string::npos) {
+            option->parseValue(arg->substr(equ + 1));
+        }
+        ++arg;
+
+        if (equ == std::string::npos && arg != end) {
+            option->parseValue(*arg++);
+        }
+
+        return arg;
+    }
+
+    template <class I>
+    I parseShortOption(I arg, I end)
+    {
+        for (size_t i = 1; i < arg->length(); i++) {
+            char key = arg->at(i);
+
+            auto optionItr = _shortOptions.find(key);
+            if (optionItr == _shortOptions.end()) {
+                _errors << "unknown option: -" << key << " in " <<
+                    *arg << "\n";
+                return std::next(arg);
+            }
+            auto& option = optionItr->second;
+
+            option->count++;
+            if (option->expectsValue && i + 1 < arg->length()) {
+                option->parseValue(arg->substr(i + 1));
+                return std::next(arg);
+            }
+
+            if (option->expectsValue) {
+                ++arg;
+                if (arg != end) {
+                    option->parseValue(*arg++);
+                }
+                return arg;
+            }
+        }
+
+        return std::next(arg);
+    }
+
+    void checkRestrictions()
+    {
+    }
 
     std::string _programName = "PROGRAM";
     std::vector<std::string> _args;
-    OptionStorage _ops;
-    std::vector<OptionDescription> _descriptions;
+    std::map<char, std::shared_ptr<OptionData>> _shortOptions;
+    std::map<std::string, std::shared_ptr<OptionData>> _longOptions;
+    std::vector<std::shared_ptr<OptionData>> _optionList;
+    std::ostringstream _errors;
+    std::set<std::string> _breakers;
 };
 
 namespace internal {
 
-extern Parser parser;
+inline Parser& parser()
+{
+    static Parser p;
+    return p;
+}
 
 } // namespace internal
 
-void parse(int argc, char* argv[]);
-void printHelp(std::ostream& out);
-
-template <std::convertible_to<std::string>... Names>
-Flag flag(Names&&... names)
+inline void parse(int argc, char* argv[])
 {
-    return internal::parser.flag(std::forward<Names>(names)...);
+    internal::parser().parse(argc, argv);
 }
 
-template <class T, std::convertible_to<std::string>... Names>
+inline void printHelp(std::ostream& out)
+{
+    internal::parser().printHelp(out);
+}
+
+template <
+    class... Names,
+    class = std::enable_if<
+        internal::conjunction<
+            std::is_convertible<Names, std::string>...>::value>>
+Flag flag(Names&&... names)
+{
+    return internal::parser().flag(std::forward<Names>(names)...);
+}
+
+template <
+    class T,
+    class... Names,
+    class = std::enable_if<
+        internal::conjunction<
+            std::is_convertible<Names, std::string>...>::value>>
 Option<T> opt(Names&&... names)
 {
-    return internal::parser.opt<T>(std::forward<Names>(names)...);
+    return internal::parser().opt<T>(std::forward<Names>(names)...);
 }
 
 } // namespace aa

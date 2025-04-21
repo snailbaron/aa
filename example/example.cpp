@@ -25,8 +25,12 @@ int main(int argc, char* argv[])
     }
 
     if (verbose) {
+        std::cerr << "I will now print\n";
+    }
+    if (verbose >= 2) {
         std::cerr << "I will now print the message " << times << " times\n";
     }
+
     for (int i = 0; i < times; i++) {
         std::cout << message << "\n";
     }
